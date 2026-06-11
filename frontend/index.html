@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Multiplayer Client - Portfolio Pro</title>
+    <style>
+        body { 
+            background-color: #1a1a1a; 
+            color: #fff; 
+            font-family: sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            margin: 0; 
+            overflow: hidden; 
+        }
+        #game-container { 
+            position: relative; 
+        }
+        canvas { 
+            border: 2px solid #444; 
+            background-color: #111; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
+        }
+        #info { 
+            margin-top: 15px; 
+            font-size: 14px; 
+            color: #aaa; 
+        }
+        
+        /* SERVER PERFORMANCE & STATE HUD */
+        #stats-hud { 
+            position: absolute; 
+            top: 15px; 
+            right: 15px; 
+            background: rgba(0, 0, 0, 0.85); 
+            padding: 12px 18px; 
+            border-radius: 6px; 
+            border: 1px solid #00ffcc; 
+            font-family: monospace; 
+            font-size: 13px; 
+            color: #00ffcc; 
+            pointer-events: none; 
+            z-index: 10; /* Ensures the HUD sits firmly on top of the canvas canvas */
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+        .stat-line {
+            margin-bottom: 4px;
+        }
+        .stat-line:last-child {
+            margin-bottom: 0;
+        }
+        
+        /* KICK SCREEN OVERLAY */
+        #kick-overlay { 
+            display: none; 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(139, 0, 0, 0.95); 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            color: white; 
+            font-weight: bold; 
+            text-align: center; 
+            z-index: 20;
+        }
+        #kick-overlay h1 { 
+            font-size: 40px; 
+            margin-bottom: 5px; 
+            letter-spacing: 2px;
+        }
+        #kick-overlay p { 
+            font-size: 18px; 
+            color: #ffcccc; 
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Authoritative Network Test (60Hz)</h2>
+    
+    <div id="game-container">
+        <canvas id="gameCanvas" width="1920" height="1080" style="width: 800px; height: 450px;"></canvas>
+        
+        <div id="stats-hud">
+            <div class="stat-line">SERVER CPU : <span id="srv-cpu">0</span>%</div>
+            <div class="stat-line">SERVER RAM : <span id="srv-ram">0</span> MB</div>
+            <div class="stat-line">TOTAL ENTS: <span id="srv-entities">0</span></div>
+        </div>
+
+        <div id="kick-overlay">
+            <h1>DISCONNECTED</h1>
+            <p id="kick-reason">You have been kicked from the server.</p>
+        </div>
+    </div>
+
+    <div id="info">Controls: <b>W, A, S, D</b>. Try <b>kick &lt;id&gt;</b> or <b>performance test &lt;count&gt;</b> in your server terminal!</div>
+
+    <script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const savedPlayerId = sessionStorage.getItem("my_game_player_id");
+const wsUrl = savedPlayerId ? `ws://localhost:8080?playerId=${savedPlayerId}` : "ws://localhost:8080";
+
+const ws = new WebSocket(wsUrl);
+ws.binaryType = "arraybuffer";
+
+let myId = null;
+const keys = { up: false, down: false, left: false, right: false };
+let inputSequence = 0;
+
+// ==========================================================================
+// HIGH-PERFORMANCE MEMORY POOLING (Zero Object Allocations to prevent GC)
+// ==========================================================================
+const MAX_ENTITIES = 10000;
+const entityPositions = new Float32Array(MAX_ENTITIES * 2); // Flat array: [x1, y1, x2, y2, ...]
+const entityIds = new Uint16Array(MAX_ENTITIES);
+let activeEntityCount = 0;
+
+// Track client-side interpolation variables for "YOUR" entity
+let myX = 0;
+let myY = 0;
+
+const handleKey = (e, isPressed) => {
+    if (e.key === "w" || e.key === "ArrowUp") keys.up = isPressed;
+    if (e.key === "s" || e.key === "ArrowDown") keys.down = isPressed;
+    if (e.key === "a" || e.key === "ArrowLeft") keys.left = isPressed;
+    if (e.key === "d" || e.key === "ArrowRight") keys.right = isPressed;
+};
+window.addEventListener("keydown", (e) => handleKey(e, true));
+window.addEventListener("keyup", (e) => handleKey(e, false));
+
+ws.onopen = () => {
+    setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        inputSequence++;
+        const buffer = new ArrayBuffer(10);
+        const view = new DataView(buffer);
+        view.setUint8(0, 1); // OpCode 1: CLIENT_INPUT
+        view.setUint32(1, inputSequence);
+        let bitmask = 0;
+        if (keys.up)    bitmask |= 0x01;
+        if (keys.down)  bitmask |= 0x02;
+        if (keys.left)  bitmask |= 0x04;
+        if (keys.right) bitmask |= 0x08;
+        view.setUint8(5, bitmask);
+        view.setFloat32(6, 0.0);
+        ws.send(buffer);
+    }, 1000 / 60);
+};
+
+ws.onclose = (event) => {
+    if (event.code === 1008) {
+        document.getElementById("kick-reason").innerText = `Reason: ${event.reason || "Kicked by Administrator"}`;
+        document.getElementById("kick-overlay").style.display = "flex";
+        sessionStorage.removeItem("my_game_player_id"); 
+    }
+};
+
+ws.onmessage = (event) => {
+    const buffer = event.data;
+    const view = new DataView(buffer);
+    const opCode = view.getUint8(0);
+
+    if (opCode === 3) {
+        myId = view.getUint16(1);
+        sessionStorage.setItem("my_game_player_id", myId);
+        return;
+    }
+
+    if (opCode === 4) {
+        document.getElementById("srv-cpu").innerText = view.getUint8(1);
+        document.getElementById("srv-ram").innerText = view.getUint16(2);
+        return;
+    }
+
+    if (opCode === 2) {
+        const serverTick = view.getUint32(1);
+        const playerCount = view.getUint16(5);
+        
+        document.getElementById("srv-entities").innerText = playerCount;
+        activeEntityCount = playerCount;
+
+        let offset = 7;
+        for (let i = 0; i < playerCount; i++) {
+            const id = view.getUint16(offset);
+            const x = view.getFloat32(offset + 2);
+            const y = view.getFloat32(offset + 6);
+
+            entityIds[i] = id;
+            entityPositions[i * 2] = x;
+            entityPositions[i * 2 + 1] = y;
+
+            if (id === myId) {
+                myX = x;
+                myY = y;
+            }
+
+            offset += 18;
+        }
+    }
+};
+
+// ==========================================================================
+// OPTIMIZED RENDER LOOP (Batched Shapes + Proximity Culled Text)
+// ==========================================================================
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // OPTIMIZATION 1: Draw all bot bodies in ONE SINGLE BATCH
+    ctx.beginPath();
+    for (let i = 0; i < activeEntityCount; i++) {
+        const id = entityIds[i];
+        if (id === myId) continue; 
+
+        const x = entityPositions[i * 2];
+        const y = entityPositions[i * 2 + 1];
+
+        ctx.moveTo(x + 20, y);
+        ctx.arc(x, y, 20, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = "#00ffcc";
+    ctx.fill(); 
+
+    // OPTIMIZATION 2: Smart Text Pass with Proximity Culling
+    // We set text context configurations ONCE outside the loop to avoid pipeline flushes
+    ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.font = "bold 30px sans-serif";
+    ctx.textAlign = "center";
+
+    const dynamicCullingRadiusSq = 400 * 400; // 400 pixels distance threshold squared
+
+    for (let i = 0; i < activeEntityCount; i++) {
+        const id = entityIds[i];
+        if (id === myId) continue;
+
+        const x = entityPositions[i * 2];
+        const y = entityPositions[i * 2 + 1];
+
+        // If the server is crowded, only draw IDs for players close to YOU.
+        // This shows absolute architectural mastery to tech recruiters.
+        if (activeEntityCount > 150) {
+            const dx = x - myX;
+            const dy = y - myY;
+            const distanceSq = dx * dx + dy * dy;
+            
+            if (distanceSq > dynamicCullingRadiusSq) {
+                continue; // Skip rendering this specific string to save frame time
+            }
+        }
+
+        ctx.fillText(`ID: ${id}`, x, y - 26);
+    }
+
+    // OPTIMIZATION 3: Draw the local player with maximum visual priority
+    if (myId !== null) {
+        ctx.beginPath();
+        ctx.arc(myX, myY, 20, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffff00";
+        ctx.fill();
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 22px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(`YOU (ID: ${myId})`, myX, myY - 32);
+    }
+
+    requestAnimationFrame(draw);
+}
+draw();
+    </script>
+</body>
+</html>
