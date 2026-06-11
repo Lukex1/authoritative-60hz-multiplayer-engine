@@ -7,13 +7,19 @@ Silnik posiada wbudowane narzędzie **Bot Stress Tester**, zdolne do symulowania
 ### 🎮 Prezentacja Wizualna
 
 **Panel administracyjny serwera:**
-<video src="https://github.com/Lukex1/authoritative-60hz-multiplayer-engine/blob/main/gifs/adminview.mp4" autoplay loop muted playsinline width="100%"></video>
+
+https://github.com/user-attachments/assets/03f6022c-0076-4aa3-a550-76ce13fd9330
+
 
 **Informacje zwracane z serwera o graczach:**
-<video src="https://github.com/Lukex1/authoritative-60hz-multiplayer-engine/blob/main/gifs/playersinfo.mp4" autoplay loop muted playsinline width="100%"></video>
+
+https://github.com/user-attachments/assets/5381cb3f-56c3-4b8d-b4fc-1113699cc401
+
 
 **Widok administracyjny oraz widok gracza podczas testów:**
-<video src="https://github.com/Lukex1/authoritative-60hz-multiplayer-engine/blob/main/gifs/adminandplayerview.mp4" autoplay loop muted playsinline width="100%"></video>
+
+https://github.com/user-attachments/assets/0fc62311-6d8f-409a-90c1-993e11f97103
+
 ### 🛠️ Główne Funkcje Techniczne
 
 * **Autorytatywna Symulacja 60Hz:** Cała fizyka, sprawdzanie kolizji ze ścianami i pozycjonowanie są obliczane wyłącznie na serwerze, co uniemożliwia oszukiwanie po stronie klienta (anti-cheat by design).
